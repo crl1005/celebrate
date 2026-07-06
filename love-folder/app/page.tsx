@@ -228,7 +228,9 @@ export default function HackerHeart() {
   // --- typewriter state for the love note ---
   const [typedText, setTypedText] = useState("");
   const [typingDone, setTypingDone] = useState(false);
-  const typeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const typeIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loveNotePanelRef = useRef<HTMLDivElement | null>(null);
+  const caretRef = useRef<HTMLSpanElement | null>(null);
 
   // --- background music ---
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -258,14 +260,18 @@ export default function HackerHeart() {
 
     return () => {
       timeouts.current.forEach(clearTimeout);
-      if (typeIntervalRef.current) clearInterval(typeIntervalRef.current);
+      if (typeIntervalRef.current) clearTimeout(typeIntervalRef.current);
     };
   }, []);
 
   // Drives the typewriter effect whenever the love note is opened/closed.
+  // Uses a recursive setTimeout (instead of a fixed setInterval) so each
+  // character's delay can vary slightly — small random jitter for a more
+  // human cadence, plus longer pauses at punctuation and paragraph breaks —
+  // rather than a robotic constant tick.
   useEffect(() => {
     if (typeIntervalRef.current) {
-      clearInterval(typeIntervalRef.current);
+      clearTimeout(typeIntervalRef.current);
       typeIntervalRef.current = null;
     }
 
@@ -279,28 +285,59 @@ export default function HackerHeart() {
     setTypedText("");
     setTypingDone(false);
 
-    typeIntervalRef.current = setInterval(() => {
-      i++;
-      setTypedText(LOVE_NOTE.slice(0, i));
+    const scheduleNext = () => {
       if (i >= LOVE_NOTE.length) {
-        if (typeIntervalRef.current) clearInterval(typeIntervalRef.current);
         typeIntervalRef.current = null;
         setTypingDone(true);
+        return;
       }
-    }, TYPE_SPEED_MS);
+
+      const char = LOVE_NOTE[i];
+      i++;
+      setTypedText(LOVE_NOTE.slice(0, i));
+
+      // +/-35% random jitter so characters don't land at a perfectly even beat
+      const jitter = TYPE_SPEED_MS * 0.35 * (Math.random() * 2 - 1);
+      let delay = TYPE_SPEED_MS + jitter;
+
+      if (char === "\n") delay += 260; // breathe at line/paragraph breaks
+      else if (char === "." || char === "!" || char === "?") delay += 200;
+      else if (char === ",") delay += 90;
+
+      delay = Math.max(delay, 4);
+
+      typeIntervalRef.current = setTimeout(scheduleNext, delay);
+    };
+
+    scheduleNext();
 
     return () => {
       if (typeIntervalRef.current) {
-        clearInterval(typeIntervalRef.current);
+        clearTimeout(typeIntervalRef.current);
         typeIntervalRef.current = null;
       }
     };
   }, [showLoveNote]);
 
+  // Keeps the caret gently in view as the letter grows past the panel's height.
+  // Falls back to scrolling the panel to the bottom once typing is complete
+  // (e.g. right after Skip, when the caret has already been removed).
+  useEffect(() => {
+    if (!showLoveNote) return;
+    if (caretRef.current) {
+      caretRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } else if (typingDone && loveNotePanelRef.current) {
+      loveNotePanelRef.current.scrollTo({
+        top: loveNotePanelRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+  }, [typedText, showLoveNote, typingDone]);
+
   const resetAll = useCallback(() => {
     timeouts.current.forEach(clearTimeout);
     timeouts.current = [];
-    if (typeIntervalRef.current) clearInterval(typeIntervalRef.current);
+    if (typeIntervalRef.current) clearTimeout(typeIntervalRef.current);
     setReels([1, 1, 0]);
     setDirections([0, 0, 0]);
     setError(false);
@@ -463,7 +500,7 @@ export default function HackerHeart() {
   // Instantly reveals the rest of the letter without waiting for the typewriter.
   const skipTyping = useCallback(() => {
     if (typeIntervalRef.current) {
-      clearInterval(typeIntervalRef.current);
+      clearTimeout(typeIntervalRef.current);
       typeIntervalRef.current = null;
     }
     setTypedText(LOVE_NOTE);
@@ -1265,6 +1302,7 @@ export default function HackerHeart() {
               }}
             >
               <div
+                ref={loveNotePanelRef}
                 className="panel"
                 style={{
                   width: "min(560px, 92vw)",
@@ -1288,7 +1326,11 @@ export default function HackerHeart() {
                 </div>
                 <div className="love-note">
                   {typedText}
-                  {!typingDone && <span className="love-note-caret">▌</span>}
+                  {!typingDone && (
+                    <span ref={caretRef} className="love-note-caret">
+                      ▌
+                    </span>
+                  )}
                 </div>
               </div>
               <div style={{ display: "flex", gap: "12px", marginTop: "22px", flexWrap: "wrap", justifyContent: "center" }}>
