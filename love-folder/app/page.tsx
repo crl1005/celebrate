@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 const BOOT_LINES = [
@@ -203,6 +203,21 @@ const POLAROID_QUOTES = [
   "This is what happy looks like, exactly.",
   "Keeping this one close, always.",
   "Time stood still just long enough for this.",
+  "A little piece of a very good day.",
+  "This is the kind of quiet I like.",
+  "Somewhere I'd happily get lost again.",
+  "Held onto this one on purpose.",
+  "The light was good, but the company was better.",
+  "One of those moments that just fit.",
+  "Didn't want this one to end.",
+  "A page worth dog-earing in my memory.",
+  "Exactly the kind of day I'd repeat.",
+  "This one still makes me grin.",
+  "Some frames just deserve to be kept.",
+  "A moment I'd bookmark if I could.",
+  "Worth every bit of the wait.",
+  "This one's staying in the good pile.",
+  "A little souvenir from a good day.",
 ];
 
 function hashString(str: string): number {
@@ -213,8 +228,27 @@ function hashString(str: string): number {
   return Math.abs(h);
 }
 
-function quoteForPhoto(url: string): string {
-  return POLAROID_QUOTES[hashString(url) % POLAROID_QUOTES.length];
+// Assigns each photo in the given list a caption from the pool with no
+// repeats within that list. The starting pick for each photo is still
+// derived from its own URL (so a given photo tends to land on the same
+// caption across renders), but collisions are resolved by walking forward
+// to the next unused slot, so no two photos in the same gallery ever show
+// the same line — unless there are more photos than lines in the pool, in
+// which case the pool simply starts repeating for the overflow.
+function assignPhotoQuotes(urls: string[]): string[] {
+  const used = new Set<number>();
+  const result: string[] = [];
+  for (const url of urls) {
+    let idx = hashString(url) % POLAROID_QUOTES.length;
+    let attempts = 0;
+    while (used.has(idx) && attempts < POLAROID_QUOTES.length) {
+      idx = (idx + 1) % POLAROID_QUOTES.length;
+      attempts++;
+    }
+    used.add(idx);
+    result.push(POLAROID_QUOTES[idx]);
+  }
+  return result;
 }
 
 let audioCtx: AudioContext | null = null;
@@ -940,6 +974,14 @@ export default function HackerHeart() {
 
   const currentPhotos = unlocked ? photoMap[unlocked.code] || [] : [];
   const canEdit = unlocked ? !lockedMap[unlocked.code] : false;
+
+  // Recomputed only when the actual set of photo URLs for this entry
+  // changes, so captions stay stable while browsing/flipping cards.
+  const currentPhotoQuotes = useMemo(
+    () => assignPhotoQuotes(currentPhotos),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentPhotos.join("|")]
+  );
 
   return (
     <div
@@ -1896,16 +1938,39 @@ export default function HackerHeart() {
               {currentPhotos.length === 0 ? (
                 <div
                   style={{
-                    color: "#6a8a6a",
-                    fontSize: "clamp(11px, 3vw, 12px)",
-                    letterSpacing: "1.5px",
-                    textAlign: "center",
-                    padding: "18px 10px",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "16px",
                   }}
                 >
-                  {canEdit
-                    ? "No photos yet — tap + to add some"
-                    : "No photos yet"}
+                  <div
+                    style={{
+                      color: "#6a8a6a",
+                      fontSize: "clamp(11px, 3vw, 12px)",
+                      letterSpacing: "1.5px",
+                      textAlign: "center",
+                      padding: "6px 10px",
+                    }}
+                  >
+                    {canEdit ? "No photos yet — tap + to add some" : "No photos yet"}
+                  </div>
+                  {canEdit && (
+                    <button
+                      className="polaroid polaroid-add"
+                      onClick={() => triggerAddPhotos(unlocked.code)}
+                      disabled={uploading}
+                      style={
+                        {
+                          "--rot": "0deg",
+                          "--ty": "0px",
+                        } as React.CSSProperties
+                      }
+                    >
+                      <span className="polaroid-add-plus">+</span>
+                      <span>{uploading ? "UPLOADING..." : "ADD"}</span>
+                    </button>
+                  )}
                 </div>
               ) : !lightboxOpen ? (
                 // --- Polaroid scatter view: tap any photo to open it full-size ---
@@ -1953,7 +2018,7 @@ export default function HackerHeart() {
                         </div>
                         <div className="polaroid-face polaroid-back">
                           <div className="polaroid-quote">
-                            “{quoteForPhoto(url)}”
+                            “{currentPhotoQuotes[i]}”
                           </div>
                         </div>
                       </div>
