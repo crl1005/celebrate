@@ -938,23 +938,37 @@ export default function HackerHeart() {
     }
   }, [unlocked, lockModal, lockDraft, lockFirstDraft, passcodeMap]);
 
-  // Opens the love note AND starts the background music.
+  // Opens the love note AND starts the background music. If the browser
+  // blocks autoplay (rare, since this is triggered by a real tap), we
+  // surface a small "tap to play" hint instead of failing silently.
+  const [audioBlocked, setAudioBlocked] = useState(false);
+
   const openLoveNote = useCallback(() => {
     setShowLoveNote(true);
+    setAudioBlocked(false);
     const audio = audioRef.current;
     if (audio) {
       audio.currentTime = 0;
       audio.volume = 0.5;
       audio.play().catch(() => {
-        // Autoplay can be blocked by the browser until the user interacts;
-        // since this fires from a click handler it should generally succeed.
+        setAudioBlocked(true);
       });
     }
+  }, []);
+
+  const retryAudio = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio
+      .play()
+      .then(() => setAudioBlocked(false))
+      .catch(() => setAudioBlocked(true));
   }, []);
 
   // Closes the love note AND stops the music.
   const closeLoveNote = useCallback(() => {
     setShowLoveNote(false);
+    setAudioBlocked(false);
     const audio = audioRef.current;
     if (audio) {
       audio.pause();
@@ -1018,9 +1032,48 @@ export default function HackerHeart() {
 
         * { box-sizing: border-box; }
 
+        html, body {
+          overflow-x: hidden;
+          -webkit-text-size-adjust: 100%;
+        }
+
         .hh-root {
           height: 100vh; /* fallback for older browsers */
           height: 100dvh; /* accounts for mobile browser chrome */
+          max-width: 100vw;
+          overflow-x: hidden;
+          overscroll-behavior: none;
+          -webkit-tap-highlight-color: transparent;
+          padding-top: env(safe-area-inset-top);
+          padding-bottom: env(safe-area-inset-bottom);
+          padding-left: env(safe-area-inset-left);
+          padding-right: env(safe-area-inset-right);
+        }
+
+        button, [role="button"], .polaroid-card {
+          touch-action: manipulation;
+          -webkit-tap-highlight-color: transparent;
+        }
+
+        button:focus-visible,
+        [role="button"]:focus-visible,
+        .polaroid-card:focus-visible,
+        .lock-input:focus-visible,
+        .reel:focus-visible {
+          outline: 2px solid #3dff6e;
+          outline-offset: 2px;
+        }
+
+        /* Respect users who've asked for less motion: keep the effect
+           (things still change), just remove the constant looping
+           animation so nothing spins/falls/pulses indefinitely. */
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            animation-duration: 0.001ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.001ms !important;
+            scroll-behavior: auto !important;
+          }
         }
 
         @keyframes fall {
@@ -1385,8 +1438,11 @@ export default function HackerHeart() {
           justify-content: center;
           align-items: flex-start;
           max-width: min(94vw, 640px);
-          max-height: 46vh;
+          max-height: 46dvh;
           overflow-y: auto;
+          overscroll-behavior: contain;
+          -webkit-overflow-scrolling: touch;
+          scroll-behavior: smooth;
           padding: 14px 6px 22px;
         }
         .polaroid {
@@ -2072,8 +2128,8 @@ export default function HackerHeart() {
                         src={currentPhotos[galleryIndex]}
                         alt={`${unlocked.label} photo ${galleryIndex + 1}`}
                         style={{
-                          maxWidth: "min(70vw, 60vh)",
-                          maxHeight: "46vh",
+                          maxWidth: "min(70vw, 60dvh)",
+                          maxHeight: "46dvh",
                           display: "block",
                           borderRadius: "6px",
                           boxShadow: "0 0 40px rgba(255,77,109,0.4)",
@@ -2260,8 +2316,9 @@ export default function HackerHeart() {
                 className="panel"
                 style={{
                   width: "min(560px, 92vw)",
-                  maxHeight: "72vh",
+                  maxHeight: "72dvh",
                   overflowY: "auto",
+                  overscrollBehavior: "contain",
                   scrollBehavior: "smooth",
                   display: "flex",
                   flexDirection: "column",
@@ -2288,6 +2345,11 @@ export default function HackerHeart() {
                 </div>
               </div>
               <div style={{ display: "flex", gap: "12px", marginTop: "22px", flexWrap: "wrap", justifyContent: "center" }}>
+                {audioBlocked && (
+                  <button className="btn btn-love" onClick={retryAudio}>
+                    🔊 TAP TO PLAY MUSIC
+                  </button>
+                )}
                 {!typingDone && (
                   <button className="btn btn-love" onClick={skipTyping}>
                     SKIP
