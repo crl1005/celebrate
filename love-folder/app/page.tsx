@@ -183,6 +183,40 @@ function polaroidOffset(i: number) {
   return POLAROID_OFFSETS[i % POLAROID_OFFSETS.length];
 }
 
+// A small pool of handwritten-style captions for the back of each polaroid.
+// The caption for a given photo is picked deterministically from its own
+// URL (a simple string hash), so the same photo always shows the same
+// caption instead of a new random one on every re-render.
+const POLAROID_QUOTES = [
+  "Caught this moment before it could slip away.",
+  "Some days deserve to be kept forever.",
+  "Little proof that we were here, together.",
+  "This one made the whole day worth it.",
+  "A memory too good to leave unframed.",
+  "Still smiling just thinking about this one.",
+  "Ordinary afternoon, extraordinary company.",
+  "Save this one for a rainy day.",
+  "The kind of moment you replay in your head.",
+  "Proof that the small days matter most.",
+  "Found another reason to smile that day.",
+  "A snapshot of somewhere I want to stay.",
+  "This is what happy looks like, exactly.",
+  "Keeping this one close, always.",
+  "Time stood still just long enough for this.",
+];
+
+function hashString(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (h * 31 + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+function quoteForPhoto(url: string): string {
+  return POLAROID_QUOTES[hashString(url) % POLAROID_QUOTES.length];
+}
+
 let audioCtx: AudioContext | null = null;
 function getAudioCtx(): AudioContext | null {
   if (typeof window === "undefined") return null;
@@ -252,6 +286,10 @@ export default function HackerHeart() {
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [showLoveNote, setShowLoveNote] = useState(false);
+
+  // Tracks which polaroids (by index within the current entry) are
+  // currently showing their back face / quote side.
+  const [flippedPhotos, setFlippedPhotos] = useState<Set<number>>(new Set());
 
   // --- shared photo vault state (backed by Supabase) ---
   const [photoMap, setPhotoMap] = useState<Record<string, string[]>>({});
@@ -484,6 +522,23 @@ export default function HackerHeart() {
     }
   }, [photoMap, unlocked, galleryIndex]);
 
+  // Clears flipped-card state whenever the current entry changes, the
+  // gallery closes, or a photo is added/removed (indices would otherwise
+  // point at the wrong card).
+  useEffect(() => {
+    setFlippedPhotos(new Set());
+  }, [unlocked?.code, galleryOpen, photoMap]);
+
+  const togglePolaroidFlip = useCallback((index: number) => {
+    playTick();
+    setFlippedPhotos((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }, []);
+
   const resetAll = useCallback(() => {
     timeouts.current.forEach(clearTimeout);
     timeouts.current = [];
@@ -496,6 +551,7 @@ export default function HackerHeart() {
     setGalleryOpen(false);
     setGalleryIndex(0);
     setLightboxOpen(false);
+    setFlippedPhotos(new Set());
     setShowLoveNote(false);
     setTypedText("");
     setTypingDone(false);
@@ -1292,32 +1348,95 @@ export default function HackerHeart() {
           padding: 14px 6px 22px;
         }
         .polaroid {
-          background: #f4efe4;
-          padding: 9px 9px 24px;
-          border-radius: 2px;
-          box-shadow: 0 6px 16px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.5) inset;
-          cursor: pointer;
-          border: none;
           width: clamp(84px, 23vw, 122px);
           flex-shrink: 0;
+          perspective: 1200px;
           transform: rotate(var(--rot, 0deg)) translateY(var(--ty, 0px));
           animation: polaroidIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
-          transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
-            box-shadow 0.35s ease;
+          transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
         }
-        .polaroid:hover, .polaroid:focus-visible {
+        .polaroid:hover {
           transform: rotate(0deg) translateY(-8px) scale(1.08);
-          box-shadow: 0 16px 30px rgba(0,0,0,0.6);
           z-index: 5;
         }
-        .polaroid img {
+        .polaroid-card {
+          position: relative;
+          width: 100%;
+          aspect-ratio: 1 / 1.22;
+          cursor: pointer;
+          outline: none;
+          transform-style: preserve-3d;
+          transition: transform 0.6s cubic-bezier(0.4, 0.2, 0.2, 1);
+        }
+        .polaroid-card.is-flipped {
+          transform: rotateY(180deg);
+        }
+        .polaroid-face {
+          position: absolute;
+          inset: 0;
+          backface-visibility: hidden;
+          -webkit-backface-visibility: hidden;
+          border-radius: 2px;
+          box-shadow: 0 6px 16px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.5) inset;
+          display: flex;
+          flex-direction: column;
+        }
+        .polaroid-front {
+          background: #f4efe4;
+          padding: 9px 9px 24px;
+        }
+        .polaroid-front img {
           display: block;
           width: 100%;
-          aspect-ratio: 1 / 1;
+          flex: 1;
+          min-height: 0;
           object-fit: cover;
           border-radius: 1px;
           filter: sepia(0.08) saturate(1.05) contrast(1.02);
           pointer-events: none;
+        }
+        .polaroid-back {
+          background: #efe6d2;
+          transform: rotateY(180deg);
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          padding: clamp(10px, 3vw, 16px);
+        }
+        .polaroid-quote {
+          font-family: Georgia, 'Times New Roman', serif;
+          font-style: italic;
+          color: #6b5638;
+          font-size: clamp(9px, 2.6vw, 11px);
+          line-height: 1.45;
+        }
+        .polaroid-expand {
+          position: absolute;
+          top: 6px;
+          right: 6px;
+          width: 22px;
+          height: 22px;
+          border-radius: 50%;
+          border: 1px solid rgba(10,15,10,0.35);
+          background: rgba(244,239,228,0.85);
+          color: #2c2416;
+          font-size: 12px;
+          line-height: 1;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          opacity: 0;
+          transform: scale(0.85);
+          transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease;
+        }
+        .polaroid-front:hover .polaroid-expand,
+        .polaroid-expand:focus-visible {
+          opacity: 1;
+          transform: scale(1);
+        }
+        .polaroid-expand:hover {
+          background: #fff;
         }
         .polaroid-add {
           background: rgba(244,239,228,0.08);
@@ -1330,9 +1449,10 @@ export default function HackerHeart() {
           gap: 4px;
           font-size: clamp(9px, 2.4vw, 10px);
           letter-spacing: 1.5px;
-          aspect-ratio: 1 / 1;
+          aspect-ratio: 1 / 1.22;
           width: 100%;
           box-shadow: none;
+          cursor: pointer;
         }
         .polaroid-add:hover {
           border-color: #3dff6e;
@@ -1794,23 +1914,49 @@ export default function HackerHeart() {
                     <div
                       key={i}
                       className="polaroid"
-                      role="button"
-                      tabIndex={0}
                       style={
                         {
                           "--rot": `${polaroidRotation(i)}deg`,
                           "--ty": `${polaroidOffset(i)}px`,
                         } as React.CSSProperties
                       }
-                      onClick={() => openPhotoAt(i)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          openPhotoAt(i);
-                        }
-                      }}
                     >
-                      <img src={url} alt={`${unlocked.label} photo ${i + 1}`} />
+                      <div
+                        className={`polaroid-card${
+                          flippedPhotos.has(i) ? " is-flipped" : ""
+                        }`}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${unlocked.label} photo ${i + 1}, tap to flip`}
+                        onClick={() => togglePolaroidFlip(i)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            togglePolaroidFlip(i);
+                          }
+                        }}
+                      >
+                        <div className="polaroid-face polaroid-front">
+                          <img src={url} alt={`${unlocked.label} photo ${i + 1}`} />
+                          <button
+                            type="button"
+                            className="polaroid-expand"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openPhotoAt(i);
+                            }}
+                            aria-label="view full size"
+                            title="View full size"
+                          >
+                            ⤢
+                          </button>
+                        </div>
+                        <div className="polaroid-face polaroid-back">
+                          <div className="polaroid-quote">
+                            “{quoteForPhoto(url)}”
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   ))}
                   {canEdit && (
