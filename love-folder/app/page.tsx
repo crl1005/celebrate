@@ -209,7 +209,7 @@ function playSuccess() {
 }
 
 export default function HackerHeart() {
-  const [phase, setPhase] = useState
+  const [phase, setPhase] = useState<
     "terminal" | "decrypting" | "password" | "reveal"
   >("terminal");
   const [renderedLines, setRenderedLines] = useState<string[]>([]);
