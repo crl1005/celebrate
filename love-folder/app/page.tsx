@@ -40,7 +40,6 @@ type PasscodeEntry = {
   code: string;
   label: string;
   dateLabel: string;
-  photos: string[];
   heart: boolean;
 };
 
@@ -49,21 +48,18 @@ const PASSCODES: PasscodeEntry[] = [
     code: "071008",
     label: "Carlos pogi",
     dateLabel: "07.10.08",
-    photos: ["/you-1.jpg", "/you-2.jpg", "/you-3.jpg"],
     heart: false,
   },
   {
     code: "071609",
     label: "Daphne",
     dateLabel: "07.16.09",
-    photos: ["/her-1.jpg", "/her-2.jpg", "/her-3.jpg"],
     heart: false,
   },
   {
     code: "122725",
     label: "US",
     dateLabel: "12.27.25",
-    photos: ["/us-1.jpg", "/us-2.jpg", "/us-3.jpg", "/us-4.jpg"],
     heart: true,
   },
 ];
@@ -73,6 +69,11 @@ const REEL_CONFIG = [
   { min: 1, max: 31, label: "DD" },
   { min: 0, max: 99, label: "YY" },
 ];
+
+// --- persistence keys for the photo vault ---
+const PHOTOS_KEY = "hackerheart-photos-v1";
+const LOCK_CODE_KEY = "hackerheart-lock-code-v1";
+const LOCK_STATE_KEY = "hackerheart-lock-state-v1";
 
 type HeartPoint = {
   x: number;
@@ -96,6 +97,8 @@ type FloatHeart = {
   size: number;
   drift: number;
 };
+
+type LockModalMode = "setupFirst" | "setupConfirm" | "unlock" | null;
 
 function randomChar() {
   return CHARSET[Math.floor(Math.random() * CHARSET.length)];
@@ -206,7 +209,7 @@ function playSuccess() {
 }
 
 export default function HackerHeart() {
-  const [phase, setPhase] = useState<
+  const [phase, setPhase] = useState
     "terminal" | "decrypting" | "password" | "reveal"
   >("terminal");
   const [renderedLines, setRenderedLines] = useState<string[]>([]);
@@ -224,6 +227,17 @@ export default function HackerHeart() {
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [showLoveNote, setShowLoveNote] = useState(false);
+
+  // --- photo vault state ---
+  const [photoMap, setPhotoMap] = useState<Record<string, string[]>>({});
+  const [locked, setLocked] = useState(false);
+  const [lockCode, setLockCode] = useState<string | null>(null);
+  const [lockModal, setLockModal] = useState<LockModalMode>(null);
+  const [lockDraft, setLockDraft] = useState("");
+  const [lockFirstDraft, setLockFirstDraft] = useState("");
+  const [lockError, setLockError] = useState(false);
+  const [pendingUploadCode, setPendingUploadCode] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // --- typewriter state for the love note ---
   const [typedText, setTypedText] = useState("");
@@ -262,6 +276,29 @@ export default function HackerHeart() {
       timeouts.current.forEach(clearTimeout);
       if (typeIntervalRef.current) clearTimeout(typeIntervalRef.current);
     };
+  }, []);
+
+  // Load the photo vault (stored pictures + lock passcode + lock state) from
+  // localStorage once on mount, so everything persists across visits.
+  useEffect(() => {
+    try {
+      const rawPhotos = localStorage.getItem(PHOTOS_KEY);
+      if (rawPhotos) setPhotoMap(JSON.parse(rawPhotos));
+    } catch {
+      // ignore corrupted/missing data
+    }
+    try {
+      const code = localStorage.getItem(LOCK_CODE_KEY);
+      if (code) setLockCode(code);
+    } catch {
+      // ignore
+    }
+    try {
+      const st = localStorage.getItem(LOCK_STATE_KEY);
+      setLocked(st === "1");
+    } catch {
+      // ignore
+    }
   }, []);
 
   // Drives the typewriter effect whenever the love note is opened/closed.
@@ -334,6 +371,40 @@ export default function HackerHeart() {
     }
   }, [typedText, showLoveNote, typingDone]);
 
+  // Keeps the gallery index in bounds if photos are removed while viewing them.
+  useEffect(() => {
+    if (!unlocked) return;
+    const list = photoMap[unlocked.code] || [];
+    if (galleryIndex >= list.length) {
+      setGalleryIndex(list.length > 0 ? list.length - 1 : 0);
+    }
+  }, [photoMap, unlocked, galleryIndex]);
+
+  const persistPhotos = (map: Record<string, string[]>) => {
+    try {
+      localStorage.setItem(PHOTOS_KEY, JSON.stringify(map));
+    } catch {
+      // storage may be full or unavailable — fail silently
+    }
+  };
+
+  const persistLockCode = (code: string | null) => {
+    try {
+      if (code) localStorage.setItem(LOCK_CODE_KEY, code);
+      else localStorage.removeItem(LOCK_CODE_KEY);
+    } catch {
+      // ignore
+    }
+  };
+
+  const persistLockState = (isLocked: boolean) => {
+    try {
+      localStorage.setItem(LOCK_STATE_KEY, isLocked ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  };
+
   const resetAll = useCallback(() => {
     timeouts.current.forEach(clearTimeout);
     timeouts.current = [];
@@ -355,6 +426,8 @@ export default function HackerHeart() {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
+    // Note: photos, the lock passcode, and the lock state are intentionally
+    // NOT cleared here — they're meant to persist across replays.
   }, []);
 
   const runDecrypt = useCallback(() => {
@@ -463,15 +536,155 @@ export default function HackerHeart() {
 
   const nextPhoto = useCallback(() => {
     if (!unlocked) return;
+    const list = photoMap[unlocked.code] || [];
+    if (list.length < 2) return;
     playTick();
-    setGalleryIndex((i) => (i + 1) % unlocked.photos.length);
-  }, [unlocked]);
+    setGalleryIndex((i) => (i + 1) % list.length);
+  }, [unlocked, photoMap]);
 
   const prevPhoto = useCallback(() => {
     if (!unlocked) return;
+    const list = photoMap[unlocked.code] || [];
+    if (list.length < 2) return;
     playTick();
-    setGalleryIndex((i) => (i - 1 + unlocked.photos.length) % unlocked.photos.length);
-  }, [unlocked]);
+    setGalleryIndex((i) => (i - 1 + list.length) % list.length);
+  }, [unlocked, photoMap]);
+
+  // Opens the OS file picker for the given entry's code (e.g. "122725").
+  const triggerAddPhotos = useCallback(
+    (code: string) => {
+      if (locked) return;
+      setPendingUploadCode(code);
+      fileInputRef.current?.click();
+    },
+    [locked]
+  );
+
+  // Reads the selected image files as base64 data URLs and stores them
+  // under that entry's code, then persists to localStorage.
+  const handleFilesSelected = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      const code = pendingUploadCode;
+      if (!files || files.length === 0 || !code) {
+        e.target.value = "";
+        return;
+      }
+
+      const readers = Array.from(files).map(
+        (file) =>
+          new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+          })
+      );
+
+      Promise.all(readers)
+        .then((dataUrls) => {
+          setPhotoMap((prev) => {
+            const next = {
+              ...prev,
+              [code]: [...(prev[code] || []), ...dataUrls],
+            };
+            persistPhotos(next);
+            return next;
+          });
+          playTick();
+        })
+        .catch(() => {
+          // one or more files failed to read — silently skip
+        })
+        .finally(() => {
+          e.target.value = "";
+          setPendingUploadCode(null);
+        });
+    },
+    [pendingUploadCode]
+  );
+
+  const removePhoto = useCallback((code: string, index: number) => {
+    setPhotoMap((prev) => {
+      const arr = [...(prev[code] || [])];
+      arr.splice(index, 1);
+      const next = { ...prev, [code]: arr };
+      persistPhotos(next);
+      return next;
+    });
+  }, []);
+
+  // --- lock flow ---
+  // Tapping the lock icon:
+  //  - if currently locked -> opens the "enter passcode" prompt
+  //  - if unlocked and no passcode set yet -> opens the "set passcode" flow, then locks
+  //  - if unlocked and a passcode already exists -> locks immediately, no code needed
+  const openLockFlow = useCallback(() => {
+    setLockError(false);
+    setLockDraft("");
+    if (locked) {
+      setLockModal("unlock");
+    } else if (lockCode) {
+      setLocked(true);
+      persistLockState(true);
+    } else {
+      setLockModal("setupFirst");
+    }
+  }, [locked, lockCode]);
+
+  const cancelLockModal = useCallback(() => {
+    setLockModal(null);
+    setLockDraft("");
+    setLockFirstDraft("");
+    setLockError(false);
+  }, []);
+
+  const submitLockModal = useCallback(() => {
+    if (lockModal === "setupFirst") {
+      if (lockDraft.trim().length === 0) return;
+      setLockFirstDraft(lockDraft);
+      setLockDraft("");
+      setLockModal("setupConfirm");
+      setLockError(false);
+      return;
+    }
+
+    if (lockModal === "setupConfirm") {
+      if (lockDraft === lockFirstDraft && lockDraft.trim().length > 0) {
+        setLockCode(lockDraft);
+        persistLockCode(lockDraft);
+        setLocked(true);
+        persistLockState(true);
+        setLockModal(null);
+        setLockDraft("");
+        setLockFirstDraft("");
+        setLockError(false);
+        playSuccess();
+      } else {
+        setLockError(true);
+        setLockDraft("");
+        setLockFirstDraft("");
+        setLockModal("setupFirst");
+        playError();
+      }
+      return;
+    }
+
+    if (lockModal === "unlock") {
+      if (lockDraft === lockCode) {
+        setLocked(false);
+        persistLockState(false);
+        setLockModal(null);
+        setLockDraft("");
+        setLockError(false);
+        playSuccess();
+      } else {
+        setLockError(true);
+        setLockDraft("");
+        playError();
+      }
+    }
+  }, [lockModal, lockDraft, lockFirstDraft, lockCode]);
 
   // Opens the love note AND starts the background music.
   const openLoveNote = useCallback(() => {
@@ -507,6 +720,8 @@ export default function HackerHeart() {
     setTypingDone(true);
   }, []);
 
+  const currentPhotos = unlocked ? photoMap[unlocked.code] || [] : [];
+
   return (
     <div
       className="hh-root"
@@ -523,10 +738,19 @@ export default function HackerHeart() {
         Background music for the love note.
         Drop your own audio file into the project's public folder as
         "about-you.mp3" (e.g. a track you own a licensed copy of).
-        This component does not ship any actual audio — you supply the file,
-        same way you supply the photo files referenced above (/you-1.jpg etc).
+        This component does not ship any actual audio — you supply the file.
       */}
       <audio ref={audioRef} src="/about-you.mp3" preload="auto" />
+
+      {/* Hidden file input used by every entry's "+ ADD PHOTO" button */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: "none" }}
+        onChange={handleFilesSelected}
+      />
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
@@ -798,6 +1022,76 @@ export default function HackerHeart() {
           margin-left: 1px;
           color: #ff4d6d;
           animation: caretBlink 0.9s steps(1) infinite;
+        }
+
+        .lock-toggle {
+          background: rgba(10,15,10,0.6);
+          border: 1px solid #2c5a2c;
+          color: #3dff6e;
+          font-size: clamp(14px, 4vw, 17px);
+          width: clamp(30px, 8vw, 36px);
+          height: clamp(30px, 8vw, 36px);
+          border-radius: 50%;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          transition: border-color 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+            box-shadow 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+            transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .lock-toggle:hover {
+          border-color: #3dff6e;
+          box-shadow: 0 0 12px rgba(61,255,110,0.45);
+          transform: scale(1.06);
+        }
+
+        .lock-input {
+          font-family: inherit;
+          background: #0a0f0a;
+          border: 1px solid #2c5a2c;
+          color: #3dff6e;
+          font-size: clamp(16px, 4vw, 20px);
+          letter-spacing: 6px;
+          text-align: center;
+          padding: 10px 14px;
+          border-radius: 4px;
+          outline: none;
+          width: min(220px, 70vw);
+          transition: border-color 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+            box-shadow 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .lock-input:focus {
+          border-color: #3dff6e;
+          box-shadow: 0 0 12px rgba(61,255,110,0.5);
+        }
+
+        .photo-frame {
+          position: relative;
+        }
+        .photo-remove {
+          position: absolute;
+          top: 6px;
+          right: 6px;
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          border: 1px solid #ff4d6d;
+          background: rgba(5,7,5,0.75);
+          color: #ff4d6d;
+          font-size: 14px;
+          line-height: 1;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: background 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+            color 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .photo-remove:hover {
+          background: #ff4d6d;
+          color: #050705;
         }
       `}</style>
 
@@ -1186,76 +1480,156 @@ export default function HackerHeart() {
             >
               <div
                 style={{
-                  color: "#3dff6e",
-                  fontSize: "clamp(10px, 3vw, 12px)",
-                  letterSpacing: "3px",
-                  textShadow: "0 0 8px rgba(61,255,110,0.5)",
-                }}
-              >
-                {unlocked.dateLabel}
-              </div>
-
-              <div
-                style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: "clamp(8px, 3vw, 16px)",
-                  maxWidth: "94vw",
+                  justifyContent: "center",
+                  gap: "14px",
+                  width: "min(94vw, 420px)",
                 }}
               >
-                <button
-                  className="nav-arrow"
-                  onClick={prevPhoto}
-                  aria-label="previous photo"
-                  disabled={unlocked.photos.length < 2}
-                  style={{ opacity: unlocked.photos.length < 2 ? 0.25 : 1 }}
-                >
-                  ‹
-                </button>
-
-                <img
-                  key={galleryIndex}
-                  src={unlocked.photos[galleryIndex]}
-                  alt={`${unlocked.label} photo ${galleryIndex + 1}`}
+                <div
                   style={{
-                    maxWidth: "min(70vw, 60vh)",
-                    maxHeight: "50vh",
-                    borderRadius: "6px",
-                    boxShadow: "0 0 40px rgba(255,77,109,0.4)",
-                    border: "1px solid #2c5a2c",
-                    animation: "photoIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both",
+                    color: "#3dff6e",
+                    fontSize: "clamp(10px, 3vw, 12px)",
+                    letterSpacing: "3px",
+                    textShadow: "0 0 8px rgba(61,255,110,0.5)",
                   }}
-                />
-
-                <button
-                  className="nav-arrow"
-                  onClick={nextPhoto}
-                  aria-label="next photo"
-                  disabled={unlocked.photos.length < 2}
-                  style={{ opacity: unlocked.photos.length < 2 ? 0.25 : 1 }}
                 >
-                  ›
+                  {unlocked.dateLabel}
+                </div>
+                <button
+                  className="lock-toggle"
+                  onClick={openLockFlow}
+                  aria-label={locked ? "unlock photo vault" : "lock photo vault"}
+                  title={locked ? "Unlock photo vault" : "Lock photo vault"}
+                >
+                  {locked ? "🔒" : "🔓"}
                 </button>
               </div>
 
-              <div style={{ display: "flex", gap: "8px" }}>
-                {unlocked.photos.map((_, i) => (
+              {locked ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "10px",
+                    padding: "18px 0",
+                  }}
+                >
+                  <div style={{ fontSize: "clamp(28px, 8vw, 40px)" }}>🔒</div>
                   <div
-                    key={i}
-                    className={`dot${i === galleryIndex ? " dot-active" : ""}`}
-                  />
-                ))}
-              </div>
+                    style={{
+                      color: "#9fb89f",
+                      fontSize: "clamp(11px, 3vw, 13px)",
+                      letterSpacing: "3px",
+                      textAlign: "center",
+                    }}
+                  >
+                    VAULT LOCKED
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {currentPhotos.length === 0 ? (
+                    <div
+                      style={{
+                        color: "#6a8a6a",
+                        fontSize: "clamp(11px, 3vw, 12px)",
+                        letterSpacing: "1.5px",
+                        textAlign: "center",
+                        padding: "18px 10px",
+                      }}
+                    >
+                      No photos yet — tap + to add some
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "clamp(8px, 3vw, 16px)",
+                        maxWidth: "94vw",
+                      }}
+                    >
+                      <button
+                        className="nav-arrow"
+                        onClick={prevPhoto}
+                        aria-label="previous photo"
+                        disabled={currentPhotos.length < 2}
+                        style={{ opacity: currentPhotos.length < 2 ? 0.25 : 1 }}
+                      >
+                        ‹
+                      </button>
 
-              <div
-                style={{
-                  color: "#9fb89f",
-                  fontSize: "clamp(10px, 2.8vw, 11px)",
-                  letterSpacing: "2px",
-                }}
-              >
-                {galleryIndex + 1} / {unlocked.photos.length}
-              </div>
+                      <div className="photo-frame">
+                        <img
+                          key={galleryIndex}
+                          src={currentPhotos[galleryIndex]}
+                          alt={`${unlocked.label} photo ${galleryIndex + 1}`}
+                          style={{
+                            maxWidth: "min(70vw, 60vh)",
+                            maxHeight: "50vh",
+                            display: "block",
+                            borderRadius: "6px",
+                            boxShadow: "0 0 40px rgba(255,77,109,0.4)",
+                            border: "1px solid #2c5a2c",
+                            animation: "photoIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both",
+                          }}
+                        />
+                        <button
+                          className="photo-remove"
+                          onClick={() => removePhoto(unlocked.code, galleryIndex)}
+                          aria-label="remove this photo"
+                          title="Remove photo"
+                        >
+                          ×
+                        </button>
+                      </div>
+
+                      <button
+                        className="nav-arrow"
+                        onClick={nextPhoto}
+                        aria-label="next photo"
+                        disabled={currentPhotos.length < 2}
+                        style={{ opacity: currentPhotos.length < 2 ? 0.25 : 1 }}
+                      >
+                        ›
+                      </button>
+                    </div>
+                  )}
+
+                  {currentPhotos.length > 0 && (
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      {currentPhotos.map((_, i) => (
+                        <div
+                          key={i}
+                          className={`dot${i === galleryIndex ? " dot-active" : ""}`}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {currentPhotos.length > 0 && (
+                    <div
+                      style={{
+                        color: "#9fb89f",
+                        fontSize: "clamp(10px, 2.8vw, 11px)",
+                        letterSpacing: "2px",
+                      }}
+                    >
+                      {galleryIndex + 1} / {currentPhotos.length}
+                    </div>
+                  )}
+
+                  <button
+                    className="btn btn-accent"
+                    onClick={() => triggerAddPhotos(unlocked.code)}
+                  >
+                    + ADD PHOTO
+                  </button>
+                </>
+              )}
 
               <div
                 style={{
@@ -1280,6 +1654,91 @@ export default function HackerHeart() {
                 <button className="btn btn-danger" onClick={resetAll}>
                   REPLAY
                 </button>
+              </div>
+            </div>
+          )}
+
+          {lockModal && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: "rgba(2,3,2,0.96)",
+                backdropFilter: "blur(6px)",
+                WebkitBackdropFilter: "blur(6px)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 30,
+                padding: "20px",
+                animation: "fadeIn 0.3s cubic-bezier(0.22, 1, 0.36, 1) both",
+              }}
+            >
+              <div
+                className="panel"
+                style={{
+                  width: "min(360px, 90vw)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "18px",
+                  alignItems: "center",
+                  animation: lockError ? "shake 0.5s ease" : "none",
+                }}
+              >
+                <div
+                  style={{
+                    color: "#3dff6e",
+                    letterSpacing: "3px",
+                    fontSize: "clamp(11px, 3vw, 13px)",
+                    textAlign: "center",
+                    textShadow: "0 0 8px rgba(61,255,110,0.5)",
+                  }}
+                >
+                  {lockModal === "setupFirst" && "> SET VAULT PASSCODE"}
+                  {lockModal === "setupConfirm" && "> CONFIRM PASSCODE"}
+                  {lockModal === "unlock" && "> ENTER VAULT PASSCODE"}
+                </div>
+
+                <input
+                  type="password"
+                  value={lockDraft}
+                  onChange={(e) => {
+                    setLockDraft(e.target.value);
+                    setLockError(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitLockModal();
+                  }}
+                  autoFocus
+                  className="lock-input"
+                  placeholder="••••••"
+                />
+
+                <div
+                  style={{
+                    minHeight: "16px",
+                    fontSize: "clamp(10px, 2.8vw, 12px)",
+                    letterSpacing: "2px",
+                    color: "#ff3d5a",
+                    textShadow: "0 0 8px rgba(255,61,90,0.6)",
+                    opacity: lockError ? 1 : 0,
+                    transition: "opacity 0.2s ease",
+                    textAlign: "center",
+                  }}
+                >
+                  {lockModal === "unlock"
+                    ? "INCORRECT PASSCODE"
+                    : "PASSCODES DID NOT MATCH — TRY AGAIN"}
+                </div>
+
+                <div style={{ display: "flex", gap: "12px" }}>
+                  <button className="btn btn-accent" onClick={submitLockModal}>
+                    {lockModal === "unlock" ? "UNLOCK" : "NEXT"}
+                  </button>
+                  <button className="btn btn-danger" onClick={cancelLockModal}>
+                    CANCEL
+                  </button>
+                </div>
               </div>
             </div>
           )}
