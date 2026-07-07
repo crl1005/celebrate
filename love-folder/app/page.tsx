@@ -1015,7 +1015,7 @@ export default function HackerHeart() {
         "about-you.mp3" (e.g. a track you own a licensed copy of).
         This component does not ship any actual audio — you supply the file.
       */}
-      <audio ref={audioRef} src="/about-you.mp3" preload="auto" />
+      <audio ref={audioRef} src="/1975.mp3" preload="auto" />
 
       {/* Hidden file input used by every entry's "+ ADD PHOTO" button */}
       <input
