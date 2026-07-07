@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { supabase } from "../lib/supabaseClient";
 
 const BOOT_LINES = [
   "> establishing secure channel...",
@@ -70,10 +71,14 @@ const REEL_CONFIG = [
   { min: 0, max: 99, label: "YY" },
 ];
 
-// --- persistence keys for the photo vault ---
-const PHOTOS_KEY = "hackerheart-photos-v1";
-const LOCK_CODE_KEY = "hackerheart-lock-code-v1";
-const LOCK_STATE_KEY = "hackerheart-lock-state-v1";
+const PHOTO_BUCKET = "vault-photos";
+
+type VaultPhotoRow = {
+  id: string;
+  code: string;
+  url: string;
+  created_at: string;
+};
 
 type HeartPoint = {
   x: number;
@@ -228,15 +233,20 @@ export default function HackerHeart() {
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [showLoveNote, setShowLoveNote] = useState(false);
 
-  // --- photo vault state ---
+  // --- shared photo vault state (backed by Supabase) ---
   const [photoMap, setPhotoMap] = useState<Record<string, string[]>>({});
+  const [photoIdMap, setPhotoIdMap] = useState<Record<string, string[]>>({});
   const [locked, setLocked] = useState(false);
   const [lockCode, setLockCode] = useState<string | null>(null);
   const [lockModal, setLockModal] = useState<LockModalMode>(null);
   const [lockDraft, setLockDraft] = useState("");
   const [lockFirstDraft, setLockFirstDraft] = useState("");
   const [lockError, setLockError] = useState(false);
+  const [lockErrorMessage, setLockErrorMessage] = useState(
+    "PASSCODES DID NOT MATCH — TRY AGAIN"
+  );
   const [pendingUploadCode, setPendingUploadCode] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // --- typewriter state for the love note ---
@@ -278,28 +288,86 @@ export default function HackerHeart() {
     };
   }, []);
 
-  // Load the photo vault (stored pictures + lock passcode + lock state) from
-  // localStorage once on mount, so everything persists across visits.
-  useEffect(() => {
-    try {
-      const rawPhotos = localStorage.getItem(PHOTOS_KEY);
-      if (rawPhotos) setPhotoMap(JSON.parse(rawPhotos));
-    } catch {
-      // ignore corrupted/missing data
+  // Groups the flat list of photo rows from Supabase into { code: [urls] }
+  // and a matching { code: [ids] } map (kept in the same order) so a photo
+  // can be deleted by id without losing track of which entry it belongs to.
+  const applyPhotoRows = useCallback((rows: VaultPhotoRow[]) => {
+    const urlMap: Record<string, string[]> = {};
+    const idMap: Record<string, string[]> = {};
+    for (const row of rows) {
+      if (!urlMap[row.code]) urlMap[row.code] = [];
+      if (!idMap[row.code]) idMap[row.code] = [];
+      urlMap[row.code].push(row.url);
+      idMap[row.code].push(row.id);
     }
-    try {
-      const code = localStorage.getItem(LOCK_CODE_KEY);
-      if (code) setLockCode(code);
-    } catch {
-      // ignore
-    }
-    try {
-      const st = localStorage.getItem(LOCK_STATE_KEY);
-      setLocked(st === "1");
-    } catch {
-      // ignore
-    }
+    setPhotoMap(urlMap);
+    setPhotoIdMap(idMap);
   }, []);
+
+  // Loads the shared vault state (lock + passcode) and shared photos from
+  // Supabase on mount, then subscribes to live changes so that if someone
+  // else locks/unlocks or adds/removes a photo, this tab updates too.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInitial() {
+      const { data: stateRow } = await supabase
+        .from("vault_state")
+        .select("locked, passcode")
+        .eq("id", 1)
+        .maybeSingle();
+
+      if (!cancelled && stateRow) {
+        setLocked(!!stateRow.locked);
+        setLockCode(stateRow.passcode ?? null);
+      }
+
+      const { data: photoRows } = await supabase
+        .from("vault_photos")
+        .select("id, code, url, created_at")
+        .order("created_at", { ascending: true });
+
+      if (!cancelled && photoRows) {
+        applyPhotoRows(photoRows as VaultPhotoRow[]);
+      }
+    }
+
+    loadInitial();
+
+    const stateChannel = supabase
+      .channel("vault_state_changes")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "vault_state" },
+        (payload) => {
+          const row = payload.new as { locked: boolean; passcode: string | null };
+          setLocked(!!row.locked);
+          setLockCode(row.passcode ?? null);
+        }
+      )
+      .subscribe();
+
+    const photosChannel = supabase
+      .channel("vault_photos_changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "vault_photos" },
+        async () => {
+          const { data: photoRows } = await supabase
+            .from("vault_photos")
+            .select("id, code, url, created_at")
+            .order("created_at", { ascending: true });
+          if (photoRows) applyPhotoRows(photoRows as VaultPhotoRow[]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(stateChannel);
+      supabase.removeChannel(photosChannel);
+    };
+  }, [applyPhotoRows]);
 
   // Drives the typewriter effect whenever the love note is opened/closed.
   // Uses a recursive setTimeout (instead of a fixed setInterval) so each
@@ -380,31 +448,6 @@ export default function HackerHeart() {
     }
   }, [photoMap, unlocked, galleryIndex]);
 
-  const persistPhotos = (map: Record<string, string[]>) => {
-    try {
-      localStorage.setItem(PHOTOS_KEY, JSON.stringify(map));
-    } catch {
-      // storage may be full or unavailable — fail silently
-    }
-  };
-
-  const persistLockCode = (code: string | null) => {
-    try {
-      if (code) localStorage.setItem(LOCK_CODE_KEY, code);
-      else localStorage.removeItem(LOCK_CODE_KEY);
-    } catch {
-      // ignore
-    }
-  };
-
-  const persistLockState = (isLocked: boolean) => {
-    try {
-      localStorage.setItem(LOCK_STATE_KEY, isLocked ? "1" : "0");
-    } catch {
-      // ignore
-    }
-  };
-
   const resetAll = useCallback(() => {
     timeouts.current.forEach(clearTimeout);
     timeouts.current = [];
@@ -426,8 +469,8 @@ export default function HackerHeart() {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
-    // Note: photos, the lock passcode, and the lock state are intentionally
-    // NOT cleared here — they're meant to persist across replays.
+    // Note: photos, the shared passcode, and the lock state live in Supabase
+    // and are intentionally NOT reset here — they persist for every visitor.
   }, []);
 
   const runDecrypt = useCallback(() => {
@@ -551,6 +594,7 @@ export default function HackerHeart() {
   }, [unlocked, photoMap]);
 
   // Opens the OS file picker for the given entry's code (e.g. "122725").
+  // Blocked while the vault is locked, since locking hides the ability to add.
   const triggerAddPhotos = useCallback(
     (code: string) => {
       if (locked) return;
@@ -560,73 +604,102 @@ export default function HackerHeart() {
     [locked]
   );
 
-  // Reads the selected image files as base64 data URLs and stores them
-  // under that entry's code, then persists to localStorage.
+  // Uploads the selected image files to Supabase Storage, then records each
+  // one as a row in vault_photos under that entry's code. Since storage and
+  // the table are shared, every visitor sees the same photos immediately
+  // (the realtime subscription above refreshes everyone's view).
   const handleFilesSelected = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
       const code = pendingUploadCode;
-      if (!files || files.length === 0 || !code) {
+      if (!files || files.length === 0 || !code || locked) {
         e.target.value = "";
+        setPendingUploadCode(null);
         return;
       }
 
-      const readers = Array.from(files).map(
-        (file) =>
-          new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(file);
-          })
-      );
+      setUploading(true);
 
-      Promise.all(readers)
-        .then((dataUrls) => {
-          setPhotoMap((prev) => {
-            const next = {
-              ...prev,
-              [code]: [...(prev[code] || []), ...dataUrls],
-            };
-            persistPhotos(next);
-            return next;
+      try {
+        for (const file of Array.from(files)) {
+          const ext = file.name.split(".").pop() || "jpg";
+          const path = `${code}/${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2)}.${ext}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from(PHOTO_BUCKET)
+            .upload(path, file, { upsert: false });
+
+          if (uploadError) continue;
+
+          const { data: publicUrlData } = supabase.storage
+            .from(PHOTO_BUCKET)
+            .getPublicUrl(path);
+
+          await supabase.from("vault_photos").insert({
+            code,
+            url: publicUrlData.publicUrl,
           });
-          playTick();
-        })
-        .catch(() => {
-          // one or more files failed to read — silently skip
-        })
-        .finally(() => {
-          e.target.value = "";
-          setPendingUploadCode(null);
-        });
+        }
+
+        // Refresh immediately rather than waiting for the realtime event.
+        const { data: photoRows } = await supabase
+          .from("vault_photos")
+          .select("id, code, url, created_at")
+          .order("created_at", { ascending: true });
+        if (photoRows) applyPhotoRows(photoRows as VaultPhotoRow[]);
+
+        playTick();
+      } finally {
+        setUploading(false);
+        e.target.value = "";
+        setPendingUploadCode(null);
+      }
     },
-    [pendingUploadCode]
+    [pendingUploadCode, locked, applyPhotoRows]
   );
 
-  const removePhoto = useCallback((code: string, index: number) => {
-    setPhotoMap((prev) => {
-      const arr = [...(prev[code] || [])];
-      arr.splice(index, 1);
-      const next = { ...prev, [code]: arr };
-      persistPhotos(next);
-      return next;
-    });
-  }, []);
+  // Removes a single photo by index for the given entry. Blocked while
+  // locked, mirroring the upload restriction.
+  const removePhoto = useCallback(
+    async (code: string, index: number) => {
+      if (locked) return;
+      const id = (photoIdMap[code] || [])[index];
+      if (!id) return;
+
+      // Optimistic local update so the UI feels instant.
+      setPhotoMap((prev) => {
+        const arr = [...(prev[code] || [])];
+        arr.splice(index, 1);
+        return { ...prev, [code]: arr };
+      });
+      setPhotoIdMap((prev) => {
+        const arr = [...(prev[code] || [])];
+        arr.splice(index, 1);
+        return { ...prev, [code]: arr };
+      });
+
+      await supabase.from("vault_photos").delete().eq("id", id);
+    },
+    [locked, photoIdMap]
+  );
 
   // --- lock flow ---
   // Tapping the lock icon:
   //  - if currently locked -> opens the "enter passcode" prompt
-  //  - if unlocked and no passcode set yet -> opens the "set passcode" flow, then locks
-  //  - if unlocked and a passcode already exists -> locks immediately, no code needed
-  const openLockFlow = useCallback(() => {
+  //  - if unlocked and no passcode has ever been set (by anyone) -> opens
+  //    the "set passcode" flow, then locks
+  //  - if unlocked and a passcode already exists -> locks immediately, no
+  //    code needed (locking itself doesn't require re-entering the code)
+  const openLockFlow = useCallback(async () => {
     setLockError(false);
     setLockDraft("");
     if (locked) {
       setLockModal("unlock");
     } else if (lockCode) {
       setLocked(true);
-      persistLockState(true);
+      await supabase.from("vault_state").update({ locked: true }).eq("id", 1);
     } else {
       setLockModal("setupFirst");
     }
@@ -639,7 +712,7 @@ export default function HackerHeart() {
     setLockError(false);
   }, []);
 
-  const submitLockModal = useCallback(() => {
+  const submitLockModal = useCallback(async () => {
     if (lockModal === "setupFirst") {
       if (lockDraft.trim().length === 0) return;
       setLockFirstDraft(lockDraft);
@@ -651,16 +724,49 @@ export default function HackerHeart() {
 
     if (lockModal === "setupConfirm") {
       if (lockDraft === lockFirstDraft && lockDraft.trim().length > 0) {
+        // Guard against a race where someone else set a passcode in the
+        // moments since this flow started: only write if it's still empty.
+        const { data: current } = await supabase
+          .from("vault_state")
+          .select("passcode")
+          .eq("id", 1)
+          .maybeSingle();
+
+        if (current?.passcode) {
+          // Someone else already set one first — adopt theirs instead.
+          setLockCode(current.passcode);
+          setLockErrorMessage(
+            "A PASSCODE WAS ALREADY SET BY SOMEONE ELSE — USE THAT ONE"
+          );
+          setLockError(true);
+          setLockDraft("");
+          setLockFirstDraft("");
+          setLockModal("unlock");
+          playError();
+          return;
+        }
+
+        const { error: updateError } = await supabase
+          .from("vault_state")
+          .update({ passcode: lockDraft, locked: true })
+          .eq("id", 1);
+
+        if (updateError) {
+          setLockErrorMessage("SOMETHING WENT WRONG — TRY AGAIN");
+          setLockError(true);
+          playError();
+          return;
+        }
+
         setLockCode(lockDraft);
-        persistLockCode(lockDraft);
         setLocked(true);
-        persistLockState(true);
         setLockModal(null);
         setLockDraft("");
         setLockFirstDraft("");
         setLockError(false);
         playSuccess();
       } else {
+        setLockErrorMessage("PASSCODES DID NOT MATCH — TRY AGAIN");
         setLockError(true);
         setLockDraft("");
         setLockFirstDraft("");
@@ -673,12 +779,16 @@ export default function HackerHeart() {
     if (lockModal === "unlock") {
       if (lockDraft === lockCode) {
         setLocked(false);
-        persistLockState(false);
         setLockModal(null);
         setLockDraft("");
         setLockError(false);
         playSuccess();
+        await supabase
+          .from("vault_state")
+          .update({ locked: false })
+          .eq("id", 1);
       } else {
+        setLockErrorMessage("INCORRECT PASSCODE");
         setLockError(true);
         setLockDraft("");
         playError();
@@ -721,6 +831,7 @@ export default function HackerHeart() {
   }, []);
 
   const currentPhotos = unlocked ? photoMap[unlocked.code] || [] : [];
+  const canEdit = !locked;
 
   return (
     <div
@@ -833,6 +944,10 @@ export default function HackerHeart() {
             color 0.3s cubic-bezier(0.22, 1, 0.36, 1);
         }
         .btn:active { transform: translateY(1px) scale(0.98); }
+        .btn:disabled {
+          opacity: 0.4;
+          cursor: default;
+        }
         .btn-accent {
           color: #3dff6e;
           border: 1px solid #3dff6e;
@@ -1507,128 +1622,122 @@ export default function HackerHeart() {
                 </button>
               </div>
 
-              {locked ? (
+              {locked && (
+                <div
+                  style={{
+                    color: "#9fb89f",
+                    fontSize: "clamp(10px, 2.8vw, 11px)",
+                    letterSpacing: "2px",
+                    textAlign: "center",
+                  }}
+                >
+                  🔒 VAULT LOCKED — VIEW ONLY
+                </div>
+              )}
+
+              {currentPhotos.length === 0 ? (
+                <div
+                  style={{
+                    color: "#6a8a6a",
+                    fontSize: "clamp(11px, 3vw, 12px)",
+                    letterSpacing: "1.5px",
+                    textAlign: "center",
+                    padding: "18px 10px",
+                  }}
+                >
+                  {canEdit
+                    ? "No photos yet — tap + to add some"
+                    : "No photos yet"}
+                </div>
+              ) : (
                 <div
                   style={{
                     display: "flex",
-                    flexDirection: "column",
                     alignItems: "center",
-                    gap: "10px",
-                    padding: "18px 0",
+                    gap: "clamp(8px, 3vw, 16px)",
+                    maxWidth: "94vw",
                   }}
                 >
-                  <div style={{ fontSize: "clamp(28px, 8vw, 40px)" }}>🔒</div>
-                  <div
-                    style={{
-                      color: "#9fb89f",
-                      fontSize: "clamp(11px, 3vw, 13px)",
-                      letterSpacing: "3px",
-                      textAlign: "center",
-                    }}
+                  <button
+                    className="nav-arrow"
+                    onClick={prevPhoto}
+                    aria-label="previous photo"
+                    disabled={currentPhotos.length < 2}
+                    style={{ opacity: currentPhotos.length < 2 ? 0.25 : 1 }}
                   >
-                    VAULT LOCKED
+                    ‹
+                  </button>
+
+                  <div className="photo-frame">
+                    <img
+                      key={galleryIndex}
+                      src={currentPhotos[galleryIndex]}
+                      alt={`${unlocked.label} photo ${galleryIndex + 1}`}
+                      style={{
+                        maxWidth: "min(70vw, 60vh)",
+                        maxHeight: "50vh",
+                        display: "block",
+                        borderRadius: "6px",
+                        boxShadow: "0 0 40px rgba(255,77,109,0.4)",
+                        border: "1px solid #2c5a2c",
+                        animation: "photoIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both",
+                      }}
+                    />
+                    {canEdit && (
+                      <button
+                        className="photo-remove"
+                        onClick={() => removePhoto(unlocked.code, galleryIndex)}
+                        aria-label="remove this photo"
+                        title="Remove photo"
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
-                </div>
-              ) : (
-                <>
-                  {currentPhotos.length === 0 ? (
-                    <div
-                      style={{
-                        color: "#6a8a6a",
-                        fontSize: "clamp(11px, 3vw, 12px)",
-                        letterSpacing: "1.5px",
-                        textAlign: "center",
-                        padding: "18px 10px",
-                      }}
-                    >
-                      No photos yet — tap + to add some
-                    </div>
-                  ) : (
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "clamp(8px, 3vw, 16px)",
-                        maxWidth: "94vw",
-                      }}
-                    >
-                      <button
-                        className="nav-arrow"
-                        onClick={prevPhoto}
-                        aria-label="previous photo"
-                        disabled={currentPhotos.length < 2}
-                        style={{ opacity: currentPhotos.length < 2 ? 0.25 : 1 }}
-                      >
-                        ‹
-                      </button>
-
-                      <div className="photo-frame">
-                        <img
-                          key={galleryIndex}
-                          src={currentPhotos[galleryIndex]}
-                          alt={`${unlocked.label} photo ${galleryIndex + 1}`}
-                          style={{
-                            maxWidth: "min(70vw, 60vh)",
-                            maxHeight: "50vh",
-                            display: "block",
-                            borderRadius: "6px",
-                            boxShadow: "0 0 40px rgba(255,77,109,0.4)",
-                            border: "1px solid #2c5a2c",
-                            animation: "photoIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both",
-                          }}
-                        />
-                        <button
-                          className="photo-remove"
-                          onClick={() => removePhoto(unlocked.code, galleryIndex)}
-                          aria-label="remove this photo"
-                          title="Remove photo"
-                        >
-                          ×
-                        </button>
-                      </div>
-
-                      <button
-                        className="nav-arrow"
-                        onClick={nextPhoto}
-                        aria-label="next photo"
-                        disabled={currentPhotos.length < 2}
-                        style={{ opacity: currentPhotos.length < 2 ? 0.25 : 1 }}
-                      >
-                        ›
-                      </button>
-                    </div>
-                  )}
-
-                  {currentPhotos.length > 0 && (
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      {currentPhotos.map((_, i) => (
-                        <div
-                          key={i}
-                          className={`dot${i === galleryIndex ? " dot-active" : ""}`}
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {currentPhotos.length > 0 && (
-                    <div
-                      style={{
-                        color: "#9fb89f",
-                        fontSize: "clamp(10px, 2.8vw, 11px)",
-                        letterSpacing: "2px",
-                      }}
-                    >
-                      {galleryIndex + 1} / {currentPhotos.length}
-                    </div>
-                  )}
 
                   <button
-                    className="btn btn-accent"
-                    onClick={() => triggerAddPhotos(unlocked.code)}
+                    className="nav-arrow"
+                    onClick={nextPhoto}
+                    aria-label="next photo"
+                    disabled={currentPhotos.length < 2}
+                    style={{ opacity: currentPhotos.length < 2 ? 0.25 : 1 }}
                   >
-                    + ADD PHOTO
+                    ›
                   </button>
-                </>
+                </div>
+              )}
+
+              {currentPhotos.length > 0 && (
+                <div style={{ display: "flex", gap: "8px" }}>
+                  {currentPhotos.map((_, i) => (
+                    <div
+                      key={i}
+                      className={`dot${i === galleryIndex ? " dot-active" : ""}`}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {currentPhotos.length > 0 && (
+                <div
+                  style={{
+                    color: "#9fb89f",
+                    fontSize: "clamp(10px, 2.8vw, 11px)",
+                    letterSpacing: "2px",
+                  }}
+                >
+                  {galleryIndex + 1} / {currentPhotos.length}
+                </div>
+              )}
+
+              {canEdit && (
+                <button
+                  className="btn btn-accent"
+                  onClick={() => triggerAddPhotos(unlocked.code)}
+                  disabled={uploading}
+                >
+                  {uploading ? "UPLOADING..." : "+ ADD PHOTO"}
+                </button>
               )}
 
               <div
@@ -1726,9 +1835,7 @@ export default function HackerHeart() {
                     textAlign: "center",
                   }}
                 >
-                  {lockModal === "unlock"
-                    ? "INCORRECT PASSCODE"
-                    : "PASSCODES DID NOT MATCH — TRY AGAIN"}
+                  {lockErrorMessage}
                 </div>
 
                 <div style={{ display: "flex", gap: "12px" }}>
