@@ -29,10 +29,7 @@ Here's to every month after this one too.
 
 Always yours.`;
 
-// Typewriter speed is derived from the letter's own length so it always
-// takes roughly as long to type out as it would take a person to read it,
-// rather than a fixed ms-per-character value.
-const READING_WPM = 140; // slightly slower than average silent reading, since this is meant to be savored
+const READING_WPM = 140;
 const LOVE_NOTE_WORD_COUNT = LOVE_NOTE.trim().split(/\s+/).length;
 const LOVE_NOTE_READ_MS = (LOVE_NOTE_WORD_COUNT / READING_WPM) * 60000;
 const TYPE_SPEED_MS = LOVE_NOTE_READ_MS / LOVE_NOTE.length;
@@ -171,8 +168,6 @@ function wrap(value: number, min: number, max: number) {
   return ((((value - min) % range) + range) % range) + min;
 }
 
-// Deterministic per-photo tilt/offset so the polaroid stack looks scattered
-// but doesn't reshuffle itself on every re-render.
 const POLAROID_ROTATIONS = [-7, 5, -4, 8, -9, 3, -3, 6, -6, 4, -8, 7, -5, 9, -2];
 const POLAROID_OFFSETS = [6, -8, 3, -4, 9, -6, 5, -3, 8, -5, 4, -7, 2, -9, 6];
 
@@ -183,10 +178,6 @@ function polaroidOffset(i: number) {
   return POLAROID_OFFSETS[i % POLAROID_OFFSETS.length];
 }
 
-// A small pool of handwritten-style captions for the back of each polaroid.
-// The caption for a given photo is picked deterministically from its own
-// URL (a simple string hash), so the same photo always shows the same
-// caption instead of a new random one on every re-render.
 const POLAROID_QUOTES = [
   "Caught this moment before it could slip away.",
   "Some days deserve to be kept forever.",
@@ -228,13 +219,6 @@ function hashString(str: string): number {
   return Math.abs(h);
 }
 
-// Assigns each photo in the given list a caption from the pool with no
-// repeats within that list. The starting pick for each photo is still
-// derived from its own URL (so a given photo tends to land on the same
-// caption across renders), but collisions are resolved by walking forward
-// to the next unused slot, so no two photos in the same gallery ever show
-// the same line — unless there are more photos than lines in the pool, in
-// which case the pool simply starts repeating for the overflow.
 function assignPhotoQuotes(urls: string[]): string[] {
   const used = new Set<number>();
   const result: string[] = [];
@@ -321,18 +305,11 @@ export default function HackerHeart() {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [showLoveNote, setShowLoveNote] = useState(false);
 
-  // Tracks which polaroids (by index within the current entry) are
-  // currently showing their back face / quote side.
   const [flippedPhotos, setFlippedPhotos] = useState<Set<number>>(new Set());
 
-  // --- shared photo vault state (backed by Supabase) ---
   const [photoMap, setPhotoMap] = useState<Record<string, string[]>>({});
   const [photoIdMap, setPhotoIdMap] = useState<Record<string, string[]>>({});
 
-  // --- per-entry lock state (backed by the vault_locks table) ---
-  // Each passcode entry ("071008", "071609", "122725") has its own
-  // independent locked flag and passcode, so locking one entry's photos
-  // never affects the other two.
   const [lockedMap, setLockedMap] = useState<Record<string, boolean>>({});
   const [passcodeMap, setPasscodeMap] = useState<Record<string, string | null>>(
     {}
@@ -349,14 +326,12 @@ export default function HackerHeart() {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // --- typewriter state for the love note ---
   const [typedText, setTypedText] = useState("");
   const [typingDone, setTypingDone] = useState(false);
   const typeIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loveNotePanelRef = useRef<HTMLDivElement | null>(null);
   const caretRef = useRef<HTMLSpanElement | null>(null);
 
-  // --- background music ---
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -388,9 +363,6 @@ export default function HackerHeart() {
     };
   }, []);
 
-  // Groups the flat list of photo rows from Supabase into { code: [urls] }
-  // and a matching { code: [ids] } map (kept in the same order) so a photo
-  // can be deleted by id without losing track of which entry it belongs to.
   const applyPhotoRows = useCallback((rows: VaultPhotoRow[]) => {
     const urlMap: Record<string, string[]> = {};
     const idMap: Record<string, string[]> = {};
@@ -404,9 +376,6 @@ export default function HackerHeart() {
     setPhotoIdMap(idMap);
   }, []);
 
-  // Loads the shared per-entry lock state and shared photos from Supabase
-  // on mount, then subscribes to live changes so that if someone else
-  // locks/unlocks an entry or adds/removes a photo, this tab updates too.
   useEffect(() => {
     let cancelled = false;
 
