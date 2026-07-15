@@ -29,16 +29,45 @@ Here's to every month after this one too.
 
 Always yours.`;
 
+const BIRTHDAY_LETTER = `Happy birthday, Daphne!
+
+I hope today feels exactly the way a birthday should — a little slower, a little brighter, full of the small things that make you smile.
+
+I put this little vault together because I wanted you to have something that felt like you: a bit hidden, a bit playful, and worth taking your time with. Every code in here is a date that mattered, and this one's yours.
+
+I was thinking about how to put this year into words, and I kept coming back to the same thought: you make ordinary things feel special just by being part of them. A random Tuesday, a boring errand, a slow afternoon with nothing planned — somehow those turn into some of my favorite memories, just because you were there too.
+
+I hope you know how much you're appreciated, even on the days you don't hear it out loud. The way you care about people, the way you notice the little things, the way you keep showing up as yourself even when it would be easier not to — none of that goes unnoticed. It matters more than you probably realize.
+
+So today, I hope you let yourself be celebrated without deflecting it or brushing it off. You deserve every bit of it, not because it's your birthday, but because of who you are the other 364 days too.
+
+I hope this next year brings you everything you're hoping for, and a few good surprises you didn't see coming. Thank you for being exactly who you are.
+
+Wherever this next year takes you, I hope it's full of good people, good laughs, and moments that make you as happy as you make the people around you.
+
+I really happy that I get the chance to know you even more, 20 yrs of your existence but almost 1 year of living with me :> I love you, I know i dont have any material to give but if we get the chance to meet, I'll treat you every food you want. I want to make this birthday of yours to be special but I dont have enough money to make it more beautiful so using my skills, i try harder just to make you feel special today. But in the future, i promise to give the best everyday and every birthday you will have. I love you so much that I didn't know how to express it by words.
+
+Happy birthday. I'm glad I get to celebrate you.`;
+
+const NOTES: Record<string, string> = {
+  "122725": LOVE_NOTE,
+  "071609": BIRTHDAY_LETTER,
+};
+
 const READING_WPM = 140;
-const LOVE_NOTE_WORD_COUNT = LOVE_NOTE.trim().split(/\s+/).length;
-const LOVE_NOTE_READ_MS = (LOVE_NOTE_WORD_COUNT / READING_WPM) * 60000;
-const TYPE_SPEED_MS = LOVE_NOTE_READ_MS / LOVE_NOTE.length;
+function computeTypeSpeedMs(text: string) {
+  const words = text.trim().split(/\s+/).filter(Boolean).length || 1;
+  const readMs = (words / READING_WPM) * 60000;
+  return readMs / Math.max(text.length, 1);
+}
 
 type PasscodeEntry = {
   code: string;
   label: string;
   dateLabel: string;
   heart: boolean;
+  flower?: boolean;
+  noteLabel?: string;
 };
 
 const PASSCODES: PasscodeEntry[] = [
@@ -53,6 +82,8 @@ const PASSCODES: PasscodeEntry[] = [
     label: "Daphne",
     dateLabel: "07.16.09",
     heart: false,
+    flower: true,
+    noteLabel: "Open your letter",
   },
   {
     code: "122725",
@@ -92,6 +123,35 @@ type HeartPoint = {
   opacity: number;
 };
 
+type BloomPetal = {
+  angle: number;
+  delay: number;
+  scale: number;
+  opacity: number;
+  layer: "outer" | "inner";
+};
+
+type BloomLeaf = {
+  angle: number;
+  delay: number;
+  scale: number;
+};
+
+type BloomSparkle = {
+  x: number;
+  y: number;
+  delay: number;
+  size: number;
+  color: string;
+};
+
+type Bloom = {
+  petals: BloomPetal[];
+  leaves: BloomLeaf[];
+  sparkles: BloomSparkle[];
+  centerDelay: number;
+};
+
 type RainColumn = {
   left: number;
   duration: number;
@@ -105,6 +165,23 @@ type FloatHeart = {
   delay: number;
   size: number;
   drift: number;
+};
+
+type FloatBalloon = {
+  left: number;
+  duration: number;
+  delay: number;
+  size: number;
+  drift: number;
+};
+
+type BurstPoint = {
+  x: number;
+  y: number;
+  delay: number;
+  size: number;
+  rotate: number;
+  token: string;
 };
 
 type LockModalMode = "setupFirst" | "setupConfirm" | "unlock" | null;
@@ -160,6 +237,87 @@ function generateHeartPoints(): HeartPoint[] {
     });
   }
 
+  return pts;
+}
+
+const OUTER_PETAL_PATH = "M0,0 C-17,-24 -15,-52 0,-66 C15,-52 17,-24 0,0 Z";
+const INNER_PETAL_PATH = "M0,0 C-9,-13 -8,-31 0,-39 C8,-31 9,-13 0,0 Z";
+const LEAF_PATH = "M0,0 C16,-6 26,-20 24,-36 C12,-28 -2,-14 0,0 Z";
+const SPARKLE_PATH = "M0,-5 L1.3,-1.3 L5,0 L1.3,1.3 L0,5 L-1.3,1.3 L-5,0 L-1.3,-1.3 Z";
+
+function scalePath(path: string, factor: number) {
+  return path.replace(/-?\d+\.?\d*/g, (m) => (parseFloat(m) * factor).toFixed(2));
+}
+
+function generateBloom(): Bloom {
+  const leaves: BloomLeaf[] = [
+    { angle: -145, delay: 0, scale: 1 },
+    { angle: 148, delay: 0.14, scale: 0.86 },
+  ];
+  let t = leaves.length * 0.14 + 0.3;
+
+  const petals: BloomPetal[] = [];
+
+  const outerCount = 6;
+  for (let i = 0; i < outerCount; i++) {
+    const angle = (i / outerCount) * 360 + (Math.random() * 6 - 3);
+    petals.push({
+      angle,
+      delay: t + i * 0.09,
+      scale: 0.94 + Math.random() * 0.14,
+      opacity: 0.97 + Math.random() * 0.03,
+      layer: "outer",
+    });
+  }
+  t += outerCount * 0.09 + 0.3;
+
+  const innerCount = 6;
+  for (let i = 0; i < innerCount; i++) {
+    const angle = (i / innerCount) * 360 + 360 / (innerCount * 2) + (Math.random() * 4 - 2);
+    petals.push({
+      angle,
+      delay: t + i * 0.07,
+      scale: 0.9 + Math.random() * 0.16,
+      opacity: 1,
+      layer: "inner",
+    });
+  }
+  t += innerCount * 0.07 + 0.35;
+
+  const centerDelay = t;
+  const sparkleBase = centerDelay + 0.4;
+
+  const sparkles: BloomSparkle[] = [];
+  const sparkleCount = 10;
+  for (let i = 0; i < sparkleCount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 62 + Math.random() * 36;
+    sparkles.push({
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius,
+      delay: sparkleBase + Math.random() * 1.2,
+      size: 3.5 + Math.random() * 3.5,
+      color: Math.random() > 0.5 ? "#fff6f8" : "#ffe27a",
+    });
+  }
+
+  return { petals, leaves, sparkles, centerDelay };
+}
+
+function generateBurstPoints(count: number, tokens: string[]): BurstPoint[] {
+  const pts: BurstPoint[] = [];
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 8 + Math.random() * 32;
+    pts.push({
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius,
+      delay: i * 0.045 + Math.random() * 0.2,
+      size: 2.4 + Math.random() * 2.3,
+      rotate: Math.random() * 50 - 25,
+      token: tokens[Math.floor(Math.random() * tokens.length)],
+    });
+  }
   return pts;
 }
 
@@ -290,8 +448,12 @@ export default function HackerHeart() {
   >("terminal");
   const [renderedLines, setRenderedLines] = useState<string[]>([]);
   const [heartPoints, setHeartPoints] = useState<HeartPoint[]>([]);
+  const [bloom, setBloom] = useState<Bloom | null>(null);
+  const [bloomed, setBloomed] = useState(false);
   const [rain, setRain] = useState<RainColumn[]>([]);
   const [floatHearts, setFloatHearts] = useState<FloatHeart[]>([]);
+  const [floatBalloons, setFloatBalloons] = useState<FloatBalloon[]>([]);
+  const [birthdayBurst, setBirthdayBurst] = useState<BurstPoint[]>([]);
   const timeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const [reels, setReels] = useState<number[]>([1, 1, 0]);
@@ -354,6 +516,16 @@ export default function HackerHeart() {
         delay: Math.random() * -12,
         size: 10 + Math.random() * 16,
         drift: (Math.random() - 0.5) * 60,
+      }))
+    );
+
+    setFloatBalloons(
+      Array.from({ length: 10 }, () => ({
+        left: Math.random() * 100,
+        duration: 15 + Math.random() * 11,
+        delay: Math.random() * -20,
+        size: 20 + Math.random() * 15,
+        drift: (Math.random() - 0.5) * 50,
       }))
     );
 
@@ -446,43 +618,40 @@ export default function HackerHeart() {
     };
   }, [applyPhotoRows]);
 
-  // Drives the typewriter effect whenever the love note is opened/closed.
-  // Uses a recursive setTimeout (instead of a fixed setInterval) so each
-  // character's delay can vary slightly — small random jitter for a more
-  // human cadence, plus longer pauses at punctuation and paragraph breaks —
-  // rather than a robotic constant tick.
   useEffect(() => {
     if (typeIntervalRef.current) {
       clearTimeout(typeIntervalRef.current);
       typeIntervalRef.current = null;
     }
 
-    if (!showLoveNote) {
+    if (!showLoveNote || !unlocked) {
       setTypedText("");
       setTypingDone(false);
       return;
     }
+
+    const noteText = NOTES[unlocked.code] ?? "";
+    const typeSpeedMs = computeTypeSpeedMs(noteText);
 
     let i = 0;
     setTypedText("");
     setTypingDone(false);
 
     const scheduleNext = () => {
-      if (i >= LOVE_NOTE.length) {
+      if (i >= noteText.length) {
         typeIntervalRef.current = null;
         setTypingDone(true);
         return;
       }
 
-      const char = LOVE_NOTE[i];
+      const char = noteText[i];
       i++;
-      setTypedText(LOVE_NOTE.slice(0, i));
+      setTypedText(noteText.slice(0, i));
 
-      // +/-35% random jitter so characters don't land at a perfectly even beat
-      const jitter = TYPE_SPEED_MS * 0.35 * (Math.random() * 2 - 1);
-      let delay = TYPE_SPEED_MS + jitter;
+      const jitter = typeSpeedMs * 0.35 * (Math.random() * 2 - 1);
+      let delay = typeSpeedMs + jitter;
 
-      if (char === "\n") delay += 260; // breathe at line/paragraph breaks
+      if (char === "\n") delay += 260;
       else if (char === "." || char === "!" || char === "?") delay += 200;
       else if (char === ",") delay += 90;
 
@@ -499,11 +668,17 @@ export default function HackerHeart() {
         typeIntervalRef.current = null;
       }
     };
-  }, [showLoveNote]);
+  }, [showLoveNote, unlocked]);
 
-  // Keeps the caret gently in view as the letter grows past the panel's height.
-  // Falls back to scrolling the panel to the bottom once typing is complete
-  // (e.g. right after Skip, when the caret has already been removed).
+  useEffect(() => {
+    if (typingDone && unlocked?.flower) {
+      const t = setTimeout(() => setBloomed(true), 650);
+      timeouts.current.push(t);
+      return () => clearTimeout(t);
+    }
+    setBloomed(false);
+  }, [typingDone, unlocked]);
+
   useEffect(() => {
     if (!showLoveNote) return;
     if (caretRef.current) {
@@ -516,7 +691,6 @@ export default function HackerHeart() {
     }
   }, [typedText, showLoveNote, typingDone]);
 
-  // Keeps the gallery index in bounds if photos are removed while viewing them.
   useEffect(() => {
     if (!unlocked) return;
     const list = photoMap[unlocked.code] || [];
@@ -525,9 +699,6 @@ export default function HackerHeart() {
     }
   }, [photoMap, unlocked, galleryIndex]);
 
-  // Clears flipped-card state whenever the current entry changes, the
-  // gallery closes, or a photo is added/removed (indices would otherwise
-  // point at the wrong card).
   useEffect(() => {
     setFlippedPhotos(new Set());
   }, [unlocked?.code, galleryOpen, photoMap]);
@@ -558,6 +729,9 @@ export default function HackerHeart() {
     setShowLoveNote(false);
     setTypedText("");
     setTypingDone(false);
+    setBloomed(false);
+    setBloom(null);
+    setBirthdayBurst([]);
     setRenderedLines([]);
     setHeartPoints(generateHeartPoints());
     setPhase("terminal");
@@ -565,8 +739,6 @@ export default function HackerHeart() {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
-    // Note: photos and each entry's shared lock/passcode live in Supabase
-    // and are intentionally NOT reset here — they persist for every visitor.
   }, []);
 
   const runDecrypt = useCallback(() => {
@@ -657,11 +829,17 @@ export default function HackerHeart() {
       setGalleryIndex(0);
       setLightboxOpen(false);
       setShowLoveNote(false);
+      setBloomed(false);
 
-      if (match.heart) {
+      if (match.heart || match.flower) {
         setGalleryOpen(false);
+        if (match.flower) {
+          setBirthdayBurst(generateBurstPoints(24, ["*", "•", ".", "·"]));
+        }
         timeouts.current.push(setTimeout(() => setPhase("reveal"), 500));
-        timeouts.current.push(setTimeout(() => setGalleryOpen(true), 5200));
+        if (match.heart) {
+          timeouts.current.push(setTimeout(() => setGalleryOpen(true), 5200));
+        }
       } else {
         setGalleryOpen(true);
         timeouts.current.push(setTimeout(() => setPhase("reveal"), 500));
@@ -696,9 +874,6 @@ export default function HackerHeart() {
     setLightboxOpen(true);
   }, []);
 
-  // Opens the OS file picker for the given entry's code (e.g. "122725").
-  // Blocked while that entry's vault is locked, since locking hides the
-  // ability to add.
   const triggerAddPhotos = useCallback(
     (code: string) => {
       if (lockedMap[code]) return;
@@ -708,10 +883,6 @@ export default function HackerHeart() {
     [lockedMap]
   );
 
-  // Uploads the selected image files to Supabase Storage, then records each
-  // one as a row in vault_photos under that entry's code. Since storage and
-  // the table are shared, every visitor sees the same photos immediately
-  // (the realtime subscription above refreshes everyone's view).
   const handleFilesSelected = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
@@ -747,7 +918,6 @@ export default function HackerHeart() {
           });
         }
 
-        // Refresh immediately rather than waiting for the realtime event.
         const { data: photoRows } = await supabase
           .from("vault_photos")
           .select("id, code, url, created_at")
@@ -764,15 +934,12 @@ export default function HackerHeart() {
     [pendingUploadCode, lockedMap, applyPhotoRows]
   );
 
-  // Removes a single photo by index for the given entry. Blocked while
-  // that entry is locked, mirroring the upload restriction.
   const removePhoto = useCallback(
     async (code: string, index: number) => {
       if (lockedMap[code]) return;
       const id = (photoIdMap[code] || [])[index];
       if (!id) return;
 
-      // Optimistic local update so the UI feels instant.
       setPhotoMap((prev) => {
         const arr = [...(prev[code] || [])];
         arr.splice(index, 1);
@@ -789,14 +956,6 @@ export default function HackerHeart() {
     [lockedMap, photoIdMap]
   );
 
-  // --- lock flow (per entry) ---
-  // Tapping the lock icon acts on whichever entry is currently unlocked:
-  //  - if that entry is currently locked -> opens the "enter passcode" prompt
-  //  - if unlocked and no passcode has ever been set for it -> opens the
-  //    "set passcode" flow, then locks
-  //  - if unlocked and a passcode already exists for it -> locks
-  //    immediately, no code needed (locking itself doesn't require
-  //    re-entering the code)
   const openLockFlow = useCallback(async () => {
     if (!unlocked) return;
     const code = unlocked.code;
@@ -834,9 +993,6 @@ export default function HackerHeart() {
 
     if (lockModal === "setupConfirm") {
       if (lockDraft === lockFirstDraft && lockDraft.trim().length > 0) {
-        // Guard against a race where someone else set a passcode for this
-        // same entry in the moments since this flow started: only write
-        // if it's still empty.
         const { data: current } = await supabase
           .from("vault_locks")
           .select("passcode")
@@ -844,7 +1000,6 @@ export default function HackerHeart() {
           .maybeSingle();
 
         if (current?.passcode) {
-          // Someone else already set one first — adopt theirs instead.
           setPasscodeMap((prev) => ({ ...prev, [code]: current.passcode }));
           setLockErrorMessage(
             "A PASSCODE WAS ALREADY SET BY SOMEONE ELSE — USE THAT ONE"
@@ -907,14 +1062,13 @@ export default function HackerHeart() {
     }
   }, [unlocked, lockModal, lockDraft, lockFirstDraft, passcodeMap]);
 
-  // Opens the love note AND starts the background music. If the browser
-  // blocks autoplay (rare, since this is triggered by a real tap), we
-  // surface a small "tap to play" hint instead of failing silently.
   const [audioBlocked, setAudioBlocked] = useState(false);
 
   const openLoveNote = useCallback(() => {
     setShowLoveNote(true);
     setAudioBlocked(false);
+    setBloomed(false);
+    setBloom(generateBloom());
     const audio = audioRef.current;
     if (audio) {
       audio.currentTime = 0;
@@ -934,7 +1088,6 @@ export default function HackerHeart() {
       .catch(() => setAudioBlocked(true));
   }, []);
 
-  // Closes the love note AND stops the music.
   const closeLoveNote = useCallback(() => {
     setShowLoveNote(false);
     setAudioBlocked(false);
@@ -945,21 +1098,19 @@ export default function HackerHeart() {
     }
   }, []);
 
-  // Instantly reveals the rest of the letter without waiting for the typewriter.
   const skipTyping = useCallback(() => {
     if (typeIntervalRef.current) {
       clearTimeout(typeIntervalRef.current);
       typeIntervalRef.current = null;
     }
-    setTypedText(LOVE_NOTE);
+    const noteText = unlocked ? NOTES[unlocked.code] ?? "" : "";
+    setTypedText(noteText);
     setTypingDone(true);
-  }, []);
+  }, [unlocked]);
 
   const currentPhotos = unlocked ? photoMap[unlocked.code] || [] : [];
   const canEdit = unlocked ? !lockedMap[unlocked.code] : false;
 
-  // Recomputed only when the actual set of photo URLs for this entry
-  // changes, so captions stay stable while browsing/flipping cards.
   const currentPhotoQuotes = useMemo(
     () => assignPhotoQuotes(currentPhotos),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -978,15 +1129,8 @@ export default function HackerHeart() {
         fontFamily: "'JetBrains Mono', 'Courier New', monospace",
       }}
     >
-      {/*
-        Background music for the love note.
-        Drop your own audio file into the project's public folder as
-        "about-you.mp3" (e.g. a track you own a licensed copy of).
-        This component does not ship any actual audio — you supply the file.
-      */}
       <audio ref={audioRef} src="/1975.mp3" preload="auto" />
 
-      {/* Hidden file input used by every entry's "+ ADD PHOTO" button */}
       <input
         ref={fileInputRef}
         type="file"
@@ -1102,6 +1246,43 @@ export default function HackerHeart() {
         @keyframes caretBlink {
           0%, 45% { opacity: 1; }
           55%, 100% { opacity: 0; }
+        }
+        @keyframes stemDraw {
+          from { stroke-dashoffset: 145; }
+          to { stroke-dashoffset: 0; }
+        }
+        @keyframes bloomPetalPop {
+          0% { opacity: 0; transform: scale(0); }
+          55% { opacity: 1; transform: scale(calc(var(--target-scale, 1) * 1.16)); }
+          100% { opacity: var(--target-opacity, 1); transform: scale(var(--target-scale, 1)); }
+        }
+        @keyframes bloomLeafPop {
+          0% { opacity: 0; transform: scale(0.25); }
+          100% { opacity: 1; transform: scale(var(--target-scale, 1)); }
+        }
+        @keyframes bloomCenterPop {
+          0% { opacity: 0; transform: scale(0); }
+          60% { opacity: 1; transform: scale(1.2); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+        @keyframes sparkleTwinkle {
+          0%, 100% { opacity: 0; transform: scale(0.3); }
+          50% { opacity: 1; transform: scale(1); }
+        }
+        @keyframes centerGlow {
+          0%, 100% { filter: brightness(1); }
+          50% { filter: brightness(1.25); }
+        }
+        @keyframes balloonFloat {
+          0% { transform: translateY(0) translateX(0); opacity: 0; }
+          8% { opacity: 1; }
+          92% { opacity: 1; }
+          100% { transform: translateY(-125vh) translateX(var(--drift, 0px)); opacity: 0; }
+        }
+        @keyframes burstPop {
+          0% { opacity: 0; transform: translate(-50%, -50%) scale(0) rotate(var(--rot, 0deg)); }
+          60% { opacity: 1; transform: translate(-50%, -50%) scale(1.2) rotate(var(--rot, 0deg)); }
+          100% { opacity: 0.92; transform: translate(-50%, -50%) scale(1) rotate(var(--rot, 0deg)); }
         }
 
         .btn {
@@ -1327,6 +1508,29 @@ export default function HackerHeart() {
           margin-left: 1px;
           color: #ff4d6d;
           animation: caretBlink 0.9s steps(1) infinite;
+        }
+
+        .bloom-wrap {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 14px;
+          padding-top: 8px;
+          animation: fadeIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+        }
+        .bloom-stage {
+          position: relative;
+          width: clamp(170px, 48vw, 230px);
+          height: clamp(180px, 50vw, 240px);
+        }
+        .bloom-caption {
+          color: #ffb3c1;
+          letter-spacing: 2px;
+          font-size: clamp(11px, 3vw, 13px);
+          text-align: center;
+          text-shadow: 0 0 8px rgba(255,179,193,0.6);
+          opacity: 0;
+          animation: fadeIn 0.7s ease 1.5s both;
         }
 
         .lock-toggle {
@@ -1603,7 +1807,30 @@ export default function HackerHeart() {
               } as React.CSSProperties
             }
           >
-            ♥
+            •
+          </div>
+        ))}
+      </div>
+
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+        {floatBalloons.map((b, i) => (
+          <div
+            key={i}
+            style={
+              {
+                position: "absolute",
+                left: `${b.left}%`,
+                bottom: "-15%",
+                fontSize: `${b.size}px`,
+                opacity: unlocked?.flower && phase === "reveal" ? 0.75 : 0,
+                "--drift": `${b.drift}px`,
+                animation: `balloonFloat ${b.duration}s linear ${b.delay}s infinite`,
+                filter: "drop-shadow(0 0 6px rgba(255,179,193,0.4))",
+                transition: "opacity 0.8s cubic-bezier(0.22, 1, 0.36, 1)",
+              } as React.CSSProperties
+            }
+          >
+            ·
           </div>
         ))}
       </div>
@@ -1864,6 +2091,28 @@ export default function HackerHeart() {
               </span>
             ))}
 
+          {unlocked.flower && !galleryOpen &&
+            birthdayBurst.map((p, i) => (
+              <span
+                key={i}
+                style={
+                  {
+                    position: "absolute",
+                    left: `calc(50% + ${p.x}vmin)`,
+                    top: `calc(50% + ${-p.y}vmin)`,
+                    transform: "translate(-50%, -50%)",
+                    fontSize: `${p.size}vmin`,
+                    "--rot": `${p.rotate}deg`,
+                    opacity: 0,
+                    animation: `burstPop 0.8s ${p.delay}s cubic-bezier(0.34,1.56,0.64,1) forwards`,
+                    pointerEvents: "none",
+                  } as React.CSSProperties
+                }
+              >
+                {p.token}
+              </span>
+            ))}
+
           {!galleryOpen && (
             <button
               className="btn btn-danger"
@@ -1880,7 +2129,7 @@ export default function HackerHeart() {
             </button>
           )}
 
-          {unlocked.heart && (
+          {(unlocked.heart || unlocked.flower) && NOTES[unlocked.code] && (
             <button
               className="btn btn-love"
               onClick={openLoveNote}
@@ -1889,10 +2138,10 @@ export default function HackerHeart() {
                 top: "clamp(12px, 3vw, 20px)",
                 right: "clamp(12px, 3vw, 20px)",
                 zIndex: 15,
-                animation: "fadeIn 1s ease 4.6s both",
+                animation: `fadeIn 1s ease ${unlocked.heart ? 4.6 : 0.9}s both`,
               }}
             >
-              To my love -
+              {unlocked.noteLabel ?? (unlocked.heart ? "To my love -" : "Open your letter")}
             </button>
           )}
 
@@ -1998,7 +2247,6 @@ export default function HackerHeart() {
                   )}
                 </div>
               ) : !lightboxOpen ? (
-                // --- Polaroid scatter view: tap any photo to open it full-size ---
                 <div className="polaroid-scatter">
                   {currentPhotos.map((url, i) => (
                     <div
@@ -2038,7 +2286,7 @@ export default function HackerHeart() {
                             aria-label="view full size"
                             title="View full size"
                           >
-                            ⤢
+                            VIEW
                           </button>
                         </div>
                         <div className="polaroid-face polaroid-back">
@@ -2067,7 +2315,6 @@ export default function HackerHeart() {
                   )}
                 </div>
               ) : (
-                // --- Lightbox view: one photo at a time, with nav + remove ---
                 <>
                   <button className="btn-link" onClick={() => setLightboxOpen(false)}>
                     ‹ back to photos
@@ -2162,7 +2409,7 @@ export default function HackerHeart() {
               </div>
 
               <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", justifyContent: "center" }}>
-                {unlocked.heart && (
+                {(unlocked.heart || unlocked.flower) && (
                   <button
                     className="btn btn-accent"
                     onClick={() => {
@@ -2302,16 +2549,194 @@ export default function HackerHeart() {
                     textShadow: "0 0 8px rgba(255,77,109,0.6)",
                   }}
                 >
-                  ♥ 12.27.25
+                  {unlocked.heart ? "LOVE" : ""} {unlocked.dateLabel}
                 </div>
+                {unlocked.flower && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "12px",
+                      justifyContent: "center",
+                      fontSize: "clamp(16px, 4.5vw, 20px)",
+                      opacity: 0.9,
+                      animation: "fadeIn 0.6s ease 0.1s both",
+                    }}
+                  >
+                  </div>
+                )}
                 <div className="love-note">
                   {typedText}
                   {!typingDone && (
                     <span ref={caretRef} className="love-note-caret">
-                      ▌
+                      |
                     </span>
                   )}
                 </div>
+
+                {unlocked.flower && bloomed && bloom && (
+                  <div className="bloom-wrap">
+                    <div className="bloom-stage">
+                      <svg
+                        viewBox="0 0 200 220"
+                        style={{ width: "100%", height: "100%", overflow: "visible" }}
+                      >
+                        <defs>
+                          <linearGradient id="petalOuterGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#ff3d5a" />
+                            <stop offset="55%" stopColor="#ff6b8a" />
+                            <stop offset="100%" stopColor="#fff0f3" />
+                          </linearGradient>
+                          <linearGradient id="petalInnerGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#ffb3c1" />
+                            <stop offset="100%" stopColor="#fff8f9" />
+                          </linearGradient>
+                          <linearGradient id="leafGrad" x1="0" y1="0" x2="1" y2="1">
+                            <stop offset="0%" stopColor="#5cc97a" />
+                            <stop offset="100%" stopColor="#2f7a45" />
+                          </linearGradient>
+                          <radialGradient id="stamenGrad" cx="50%" cy="35%" r="65%">
+                            <stop offset="0%" stopColor="#fff8d8" />
+                            <stop offset="55%" stopColor="#ffe27a" />
+                            <stop offset="100%" stopColor="#f2b632" />
+                          </radialGradient>
+                        </defs>
+
+                        {/* stem, drawn on first */}
+                        <line
+                          x1="100"
+                          y1="70"
+                          x2="100"
+                          y2="205"
+                          stroke="#2f6a3a"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          style={{
+                            strokeDasharray: 145,
+                            strokeDashoffset: 145,
+                            animation: "stemDraw 0.6s ease-out forwards",
+                          }}
+                        />
+
+                        {/* leaves, low on the stem */}
+                        {bloom.leaves.map((l, i) => (
+                          <g key={`leaf-${i}`} transform={`translate(100,132) rotate(${l.angle})`}>
+                            <path
+                              d={LEAF_PATH}
+                              fill="url(#leafGrad)"
+                              style={
+                                {
+                                  transformOrigin: "0px 0px",
+                                  opacity: 0,
+                                  "--target-scale": l.scale,
+                                  animation: `bloomLeafPop 0.55s ${l.delay}s cubic-bezier(0.34,1.56,0.64,1) forwards`,
+                                } as React.CSSProperties
+                              }
+                            />
+                          </g>
+                        ))}
+
+                        {/* outer ring of petals */}
+                        {bloom.petals
+                          .filter((p) => p.layer === "outer")
+                          .map((p, i) => (
+                            <g key={`op-${i}`} transform={`translate(100,70) rotate(${p.angle})`}>
+                              <path
+                                d={OUTER_PETAL_PATH}
+                                fill="url(#petalOuterGrad)"
+                                style={
+                                  {
+                                    transformOrigin: "0px 0px",
+                                    opacity: 0,
+                                    "--target-scale": p.scale,
+                                    "--target-opacity": p.opacity,
+                                    animation: `bloomPetalPop 0.65s ${p.delay}s cubic-bezier(0.34,1.56,0.64,1) forwards`,
+                                  } as React.CSSProperties
+                                }
+                              />
+                            </g>
+                          ))}
+
+                        {/* inner ring, nested in the gaps between outer petals */}
+                        {bloom.petals
+                          .filter((p) => p.layer === "inner")
+                          .map((p, i) => (
+                            <g key={`ip-${i}`} transform={`translate(100,70) rotate(${p.angle})`}>
+                              <path
+                                d={INNER_PETAL_PATH}
+                                fill="url(#petalInnerGrad)"
+                                style={
+                                  {
+                                    transformOrigin: "0px 0px",
+                                    opacity: 0,
+                                    "--target-scale": p.scale,
+                                    "--target-opacity": p.opacity,
+                                    animation: `bloomPetalPop 0.6s ${p.delay}s cubic-bezier(0.34,1.56,0.64,1) forwards`,
+                                  } as React.CSSProperties
+                                }
+                              />
+                            </g>
+                          ))}
+
+                        {/* stamen cluster at the very center, blooms last */}
+                        <g
+                          transform="translate(100,70)"
+                          style={
+                            {
+                              transformOrigin: "0px 0px",
+                              opacity: 0,
+                              animation: `bloomCenterPop 0.6s ${bloom.centerDelay}s cubic-bezier(0.34,1.56,0.64,1) forwards, centerGlow 2.4s ease-in-out ${
+                                bloom.centerDelay + 1.2
+                              }s infinite`,
+                            } as React.CSSProperties
+                          }
+                        >
+                          <circle r="10" fill="url(#stamenGrad)" />
+                          {Array.from({ length: 7 }).map((_, i) => {
+                            const a = (i / 7) * Math.PI * 2;
+                            return (
+                              <circle
+                                key={i}
+                                cx={Math.cos(a) * 8}
+                                cy={Math.sin(a) * 8}
+                                r="2"
+                                fill="#f2b632"
+                              />
+                            );
+                          })}
+                        </g>
+
+                        {/* twinkling sparkles scattered around the finished bloom */}
+                        {bloom.sparkles.map((s, i) => (
+                          <g key={`sp-${i}`} transform={`translate(${100 + s.x},${70 + s.y})`}>
+                            <path
+                              d={scalePath(SPARKLE_PATH, s.size / 5)}
+                              fill={s.color}
+                              style={{
+                                opacity: 0,
+                                animation: `sparkleTwinkle 2.2s ${s.delay}s ease-in-out infinite`,
+                              }}
+                            />
+                          </g>
+                        ))}
+                      </svg>
+                    </div>
+                    <div
+                      className="bloom-caption"
+                      style={{ animationDelay: `${bloom.centerDelay + 0.55}s` }}
+                    >
+                      🌷 HAPPY BIRTHDAY 🌷
+                    </div>
+                    <button
+                      className="btn btn-love"
+                      onClick={() => {
+                        closeLoveNote();
+                        setGalleryOpen(true);
+                      }}
+                    >
+                      VIEW PHOTOS
+                    </button>
+                  </div>
+                )}
               </div>
               <div style={{ display: "flex", gap: "12px", marginTop: "22px", flexWrap: "wrap", justifyContent: "center" }}>
                 {audioBlocked && (
